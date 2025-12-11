@@ -1,39 +1,107 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>SSE Demo</title>
+    <title>SSE Demo - Stock Dashboard</title>
     <meta charset="utf-8" />
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>    
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+      body { font-family: Arial; padding: 20px; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { padding: 8px 12px; border-bottom: 1px solid #ccc; }
+      th { background: #f1f1f1; }
+      .spark { width: 120px; height: 35px; }
+    </style>
   </head>
   <body>
     <div id="app"></div>
-    <script src="react/react.js"></script>
-    <script src="react/react-dom.js"></script>
-    <script src="react/babel.js"></script>
     <script type="text/babel">
+      // http://localhost:8080/SSEClientSideDemo.html
 
-      const useState = React.useState;
-      const useEffect = React.useEffect;
-      
-      function App() {
-	  const [time, setTime] = useState('');
-	  useEffect(() => {
-              const eventSource = new EventSource('http://localhost:5000/events');
-              eventSource.onmessage = (event) => {
-		  const data = JSON.parse(event.data);
-		  setTime(data.time);
-              };
-              return () => eventSource.close();
-	  }, []);
-	  return (
-		  <div>
-		  <h1>Server-Sent Events Demo</h1>
-		  <p>Current Time: {time}</p>
-		  </div>
-	  );
+      const { useState, useEffect } = React;
+
+      class FixedQueue {
+        constructor(size) {
+          this.size = size;
+          this.queue = [];
+        }
+        push(val) {
+          this.queue.push(val);
+          if (this.queue.length > this.size) this.queue.shift();
+        }
+        values() { return this.queue; }
       }
-      ReactDOM.render(
-              <App />,
-	  document.getElementById('app'));
+
+      const TICKERS = ["AMZN", "IBM", "DOW", "NASDAQ"]; 
+      const NAMES = { AMZN: "Amazon", IBM: "IBM", DOW: "Dow", NASDAQ: "Nasdaq" };
+      const SPARK_SIZE = 80;
+
+      function Sparkline({ id, data }) {
+        useEffect(() => {
+          d3.select(`#${id}`).selectAll("svg").remove(); // clears old
+          const w = 120, h = 35;
+          const svg = d3.select(`#${id}`)
+            .append("svg").attr("width", w).attr("height", h);
+
+          if (data.length > 1) {
+            const x = d3.scaleLinear().domain([0, data.length - 1]).range([0, w]);
+            const y = d3.scaleLinear().domain([d3.min(data), d3.max(data)]).range([h, 0]);
+            const line = d3.line().x((d, i) => x(i)).y(d => y(d));
+
+            svg.append("path")
+              .datum(data)
+              .attr("fill", "none")
+              .attr("stroke", "steelblue")
+              .attr("stroke-width", 2)
+              .attr("d", line);
+          }
+        }, [data]);
+
+        return <div id={id} class="spark"></div>;
+      }
+
+      function App() {
+        const [stocks, setStocks] = useState(() => {
+          const obj = {}; TICKERS.forEach(t => obj[t] = { ticker:t, name:NAMES[t], price:0, volume:0 }); return obj; });
+        const [history, setHistory] = useState(() => {
+          const obj = {}; TICKERS.forEach(t => obj[t] = new FixedQueue(SPARK_SIZE)); return obj; });
+
+        useEffect(() => {
+          const sse = new EventSource('http://localhost:31415/stocks');
+
+          sse.onmessage = e => {
+            const data = JSON.parse(e.data);
+            setStocks(prev => ({ ...prev, [data.ticker]: data }));
+            setHistory(prev => { prev[data.ticker].push(data.price); return { ...prev }; });
+          };
+          return () => sse.close();
+        }, []);
+
+        return (
+          <div>
+            <h1>Reactive Stock Dashboard (SSE + React + D3)</h1>
+            <table>
+              <thead><tr><th>Ticker</th><th>Name</th><th>Price</th><th>Volume</th><th>Sparkline</th></tr></thead>
+              <tbody>
+                {TICKERS.map(t => (
+                  <tr key={t}>
+                    <td>{t}</td>
+                    <td>{stocks[t].name}</td>
+                    <td>${stocks[t].price}</td>
+                    <td>{stocks[t].volume}</td>
+                    <td><Sparkline id={`spark-${t}`} data={history[t].values()} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p style={{marginTop:10,fontSize:13,color:'#555'}}>Connected to SSE: <b>http://localhost:31415/stocks</b></p>
+          </div>
+        );
+      }
+
+      ReactDOM.render(<App />, document.getElementById('app'));
     </script>
   </body>
 </html>
